@@ -158,12 +158,13 @@ class Dynamical_Hamiltonian():
 		self.Delta3 = lambda t, Tend, ccw: Delta3(t, Tend, ccw)
 
 		sigma_331 = lambda t, Tend, ccw: sigma_jk(P3(t, Tend, ccw), Delta3(t, Tend, ccw), P3(t, Tend, ccw), Delta3(t, Tend, ccw),
-					self.omega1, self.kappa, self.kappa_ext, Omega_L)
+					self.omega1, self.Kappa, self.Kappaext, Omega_L)
 
 		sigma_332 = lambda t, Tend, ccw: sigma_jk(P3(t, Tend, ccw), Delta3(t, Tend, ccw), P3(t, Tend, ccw), Delta3(t, Tend, ccw),
-					self.omega2, self.kappa, self.kappa_ext, Omega_L)
+					self.omega2, self.Kappa, self.Kappaext, Omega_L)
 
-		self.Htot = lambda t, Tend, ccw: self.Htot(t, Tend, ccw) + np.array([[sigma_331(t, Tend, ccw), 0],[0, sigma_332(t, Tend, ccw)]])
+		self.Htot = lambda t, Tend, ccw: self.Htot(t, Tend, ccw) + np.array([[self.g1**2*sigma_331(t, Tend, ccw), 0],
+																				self.g2**2*[0, sigma_332(t, Tend, ccw)]])
 
 		return
 
@@ -267,11 +268,11 @@ class Static_Hamiltonian():
 		self.P3 = P3
 		self.Delta3 = Delta3
 
-		sigma_331 = sigma_jk(P3, Delta3, P3, Delta1, self.omega1, self.kappa, self.kappa_ext, Omega_L)
+		sigma_331 = sigma_jk(P3, Delta3, P3, Delta3, self.omega1, self.Kappa, self.Kappaext, Omega_L)
 
-		sigma_332 = sigma_jk(P3, Delta3, P3, Delta1, self.omega2, self.kappa, self.kappa_ext, Omega_L)
+		sigma_332 = sigma_jk(P3, Delta3, P3, Delta3, self.omega2, self.Kappa, self.Kappaext, Omega_L)
 
-		self.Htot = self.Htot + np.array([[sigma_331, 0],[0, sigma_332]])
+		self.Htot = self.Htot + np.array([[self.g1**2*sigma_331, 0],[0, self.g2**2*sigma_332]])
 
 		return
 
@@ -472,6 +473,43 @@ class EP2_finder():
 		ressort = resfound[sort]
 		args = sort[np.where(ressort < np.min(ressort)+4)]
 		return remove_duplicates(np.array([Pfound[args], Dfound[args]]).T, 1)
+
+
+
+	def EP2finderPgeoDelta_3rdtone(self, eta, P3, D3):
+		Parr = np.linspace(0, 50, 8)
+		Darr = np.linspace(-2*2*np.pi,2*2*np.pi,8)
+		P, D = np.meshgrid(Parr, Darr)
+		Pguess, Dguess = np.ravel(P), np.ravel(D)
+		Pfound, Dfound, resfound = np.zeros(len(Pguess)), np.zeros(len(Pguess)), np.zeros(len(Pguess))
+
+		def minfun(z):
+			P, delta = z
+			Ham = Static_Hamiltonian(np.abs(P)*1e-6, np.abs(P)*1e-6, delta*2*np.pi*1e6, 
+								 2*np.pi*eta, 0, self.Hparams)
+			Ham.add_3rd_tone(P3*1e-6, D3*2*np.pi*1e6)
+			AJX = Ham.AJDiscriminant()
+			return np.log(np.real(AJX)**2 + np.imag(AJX)**2)
+
+		for i in range(len(Pguess)):
+			res = op.minimize(minfun, [Pguess[i], Dguess[i]], method = "Powell")
+			Pfound[i] = np.abs(res['x'][0])
+			Dfound[i] = res['x'][1]
+			resfound[i] = minfun(res['x'])
+		resfound = removeinf(resfound)
+		sort = np.argsort(resfound)
+		ressort = resfound[sort]
+		args = sort[np.where(ressort < np.min(ressort)+4)]
+		return remove_duplicates(np.array([Pfound[args], Dfound[args]]).T, 1)
+
+
+
+
+
+
+
+
+
 
 
 
@@ -676,6 +714,7 @@ class dynamics_sim_EP2():
 
 		return np.array([[a, b], [c, d]])
 
+
 	def calc_prop_list(self, Tlist, Projection, traceless = False):
 
 		self.tstamps = Tlist
@@ -692,6 +731,38 @@ class dynamics_sim_EP2():
 			proptemp = self.propagator(t, -1, Projection, traceless)
 			a[i], b[i], c[i], d[i] = proptemp[0,0], proptemp[0,1], proptemp[1,0], proptemp[1,1]
 		self.current_prop_b = np.vstack([a, b, c, d])
+
+		return
+
+	def eigenvector_phase(self, Tend, ccw, traceless = False):
+		# Simulation of the phase accumulated by the single eigenvector near an EP
+		# Which, since we're never actually at an EP, is the average of the two 
+		# actual eigenvectors. 
+		self.c0 = self.S @ np.array([1,1])/np.sqrt(2)
+		self.run_loop(Tend, ccw, traceless)
+		self.project_solution("Diagonal")
+		c1 = self.c1[-1]
+		c2 = self.c2[-1]
+
+		return (c1 + c2)/2
+
+	def calc_evec_phase_list(self, Tlist, traceless = False):
+
+		self.tstamps = Tlist
+		self.steps = len(Tlist)
+		a = np.zeros(self.steps)+1j
+
+		for i, t in enumerate(self.tstamps):
+			proptemp = self.eigenvector_phase(t, 1, traceless)
+			a[i] = proptemp
+		self.current_sim_f = a
+
+		a = np.zeros(self.steps)+1j
+
+		for i, t in enumerate(self.tstamps):
+			proptemp = self.eigenvector_phase(t, -1, traceless)
+			a[i] = proptemp
+		self.current_sim_b = a
 
 		return
 
@@ -715,6 +786,19 @@ class dynamics_sim_EP2():
 		np.savetxt(filename_b, saveb)
 		if plot == True:
 			self.plot_diags()
+		return
+
+	def calc_and_save_evec_phase(self, Tlist, filename_f, filename_b, traceless = False, plot = False):
+		self.calc_evec_phase_list(Tlist, traceless)
+		filename_f = self.current_path + '/' + filename_f
+		filename_b = self.current_path + '/' + filename_b
+
+		savef = np.vstack([self.tstamps, self.current_sim_f]).T
+		np.savetxt(filename_f, savef)
+		saveb = np.vstack([self.tstamps, self.current_sim_b]).T
+		np.savetxt(filename_b, saveb)
+		if plot == True:
+			self.plot_Evec_phase()
 		return
 
 
@@ -749,7 +833,30 @@ class dynamics_sim_EP2():
 		plt.close()
 		return
 
+	def plot_Evec_phase(self):
+		a_f = self.current_sim_f
+		a_b = self.current_sim_b
+		EPoffsetP = self.P1(0,1,1)*1e6 - self.EP[0]
+		EPoffsetD = self.delta(0,1,1)/(2*np.pi*1e6) - self.EP[1]
 
+		fig, [ax1, ax2] = plt.subplots(nrows = 1, ncols = 2, figsize = (13,6))
+		ax1.plot(self.tstamps*1e3, np.log(np.abs(a_f)), label = '$U_{11}$ forwards')
+		ax1.plot(self.tstamps*1e3, np.log(np.abs(a_b)), label = '$U_{11}$ backwards', linestyle = '--')
+		ax1.legend()
+		ax1.set_title("$\delta$ = {:.3f} MHz from EP".format(EPoffsetD))
+		ax1.set_xlabel('loop time (ms)')
+		ax1.set_ylabel('log[Abs[prop coeff]]')
+
+		ax2.plot(self.tstamps*1e3, np.unwrap(np.angle(a_f)), label = '$U_{11}$ forwards')
+		ax2.plot(self.tstamps*1e3, np.unwrap(np.angle(a_b)), label = '$U_{11}$ backwards', linestyle = '--')
+		ax2.set_xlabel('loop time (ms)')
+		ax2.set_ylabel('Phase[prop coeff]')
+		ax2.set_title("$P_1$ = {:.3f} $\mu$W from EP".format(EPoffsetP))
+		ax2.legend()
+		filename = self.current_path + "/diag_prop_plot_poff_{:.3f}_doff_{:.3f}.png".format(EPoffsetP, EPoffsetD)
+		plt.savefig(filename, bbox_inches = 'tight')
+		plt.close()
+		return
 
 
 
