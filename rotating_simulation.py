@@ -72,6 +72,14 @@ def get_gain_leftright(M):
 	return egain, rgain, lgain/norm
 
 
+def Ham_at_EP_get_Rphi(EpHamiltonian):
+    R = (EpHamiltonian[0,0] -  EpHamiltonian[1,1])/2
+    HEPnorm = EpHamiltonian/R
+    phi = -1j/2*np.log(EpHamiltonian[1,0]/EpHamiltonian[0,1])
+    return R, phi
+
+
+
 
 '''
 Hamiltonian Functions
@@ -138,10 +146,10 @@ class Dynamical_Hamiltonian():
 		self.Delta2 = lambda t, Tend, ccw: -self.omega2 + delta(t, Tend, ccw) + eta(t, Tend, ccw)
 		self.Hbare = Hbare(self.omega1, self.omega2, self.gamma1, self.gamma2)
 
-		HSigma = lambda t, Tend, ccw: H_sigma(P1(t, Tend, ccw), self.Delta1(t, Tend, ccw), P2(t, Tend, ccw), self.Delta2(t, Tend, ccw),
-					Phi12(t, Tend, ccw), self.omega1, self.omega2, self.gamma1, self.gamma2, self.Kappa, self.Kappaext, self.g1, self.g2)
+		HSigma = lambda t, Tend, ccw: H_sigma(self.P1(t, Tend, ccw), self.Delta1(t, Tend, ccw), self.P2(t, Tend, ccw), self.Delta2(t, Tend, ccw),
+					self.phi12(t, Tend, ccw), self.omega1, self.omega2, self.gamma1, self.gamma2, self.Kappa, self.Kappaext, self.g1, self.g2)
 
-		HPhotoThermal = lambda t, Tend, ccw: H_photothermal(P1(t, Tend, ccw), self.Delta1(t, Tend, ccw), P2(t, Tend, ccw), self.Delta2(t, Tend, ccw), 
+		HPhotoThermal = lambda t, Tend, ccw: H_photothermal(self.P1(t, Tend, ccw), self.Delta1(t, Tend, ccw), self.P2(t, Tend, ccw), self.Delta2(t, Tend, ccw), 
 					self.Kappa, self.Kappaext, self.A1, self.A2)
 
 		PauliZ = np.array([[1, 0], [0, -1]])
@@ -163,8 +171,19 @@ class Dynamical_Hamiltonian():
 		sigma_332 = lambda t, Tend, ccw: sigma_jk(P3(t, Tend, ccw), Delta3(t, Tend, ccw), P3(t, Tend, ccw), Delta3(t, Tend, ccw),
 					self.omega2, self.Kappa, self.Kappaext, Omega_L)
 
-		self.Htot = lambda t, Tend, ccw: self.Htot(t, Tend, ccw) + np.array([[self.g1**2*sigma_331(t, Tend, ccw), 0],
-																				self.g2**2*[0, sigma_332(t, Tend, ccw)]])
+		HSigma = lambda t, Tend, ccw: H_sigma(self.P1(t, Tend, ccw), self.Delta1(t, Tend, ccw), self.P2(t, Tend, ccw), self.Delta2(t, Tend, ccw),
+					self.phi12(t, Tend, ccw), self.omega1, self.omega2, self.gamma1, self.gamma2, self.Kappa, self.Kappaext, self.g1, self.g2)
+
+		HPhotoThermal = lambda t, Tend, ccw: H_photothermal(self.P1(t, Tend, ccw), self.Delta1(t, Tend, ccw), self.P2(t, Tend, ccw), self.Delta2(t, Tend, ccw), 
+					self.Kappa, self.Kappaext, self.A1, self.A2)
+
+		PauliZ = np.array([[1, 0], [0, -1]])
+
+		self.Htot = lambda t, Tend, ccw: (
+			self.Hbare + HSigma(t, Tend, ccw) + HPhotoThermal(t, Tend, ccw) + 
+					((self.Delta1(t, Tend, ccw)- self.Delta2(t, Tend, ccw)) / 2)*PauliZ +
+					np.array([[self.g1**2*sigma_331(t, Tend, ccw), 0],[0, self.g2**2*sigma_332(t, Tend, ccw)]])
+					)
 
 		return
 
@@ -227,8 +246,6 @@ class Dynamical_Hamiltonian():
 				inners[i] = np.dot(lefts[i+1,:], rights[i,:])
 
 		return -1j*np.log(np.prod(inners))
-
-
 
 
 class Static_Hamiltonian():
@@ -395,12 +412,6 @@ class Manual_Hamiltonian():
 
 
 
-def Ham_at_EP_get_Rphi(EpHamiltonian):
-    R = EpHamiltonian[0,0]
-    HEPnorm = EpHamiltonian/R
-    phi = -1j/2*np.log(EpHamiltonian[1,0]/EpHamiltonian[0,1])
-    return R, phi
-
 
 
 
@@ -513,6 +524,16 @@ class EP2_finder():
 
 
 
+
+
+
+
+
+
+
+
+
+
 '''
 Simulation class
 '''
@@ -547,7 +568,7 @@ class dynamics_sim_EP2():
 		self.Hparams = Hparams
 		return
 	
-	def load_path(self, P1, P2, delta, eta, phi12):
+	def load_path(self, P1, P2, delta, eta, phi12, P3 = None, D3 = None):
 
 		self.P1 = lambda t, Tend, ccw:  1e-6*P1(t, Tend, ccw)
 		self.P2 = lambda t, Tend, ccw:  1e-6*P2(t, Tend, ccw)
@@ -557,12 +578,16 @@ class dynamics_sim_EP2():
 		self.phi12 = phi12 
 
 		self.Ham = Dynamical_Hamiltonian(self.P1, self.P2, self.delta, self.eta, self.phi12, self.Hparams)
+
+		if type(P3) and type(D3) != type(None):
+			self.P3 = lambda t, Tend, ccw: 1e-6*P3(t, Tend, ccw)
+			self.D3 = lambda t, Tend, ccw: 2*np.pi*1e6*D3(t, Tend, ccw)
+			self.Ham.add_3rd_tone(self.P3, self.D3)
 		
 		self.H0 = self.Ham.HRetraceless(0,1,1)
 		
 		self.get_H0_stuff()
 
-	
 	def get_H0_stuff(self):
 		# gets and stores a bunch of useful parameters at
 		# the beginning of the cicuit
@@ -603,12 +628,17 @@ class dynamics_sim_EP2():
 	def get_EP(self, eta = None):
 		self.EP2_finder = EP2_finder(self.Hparams)
 		if type(eta) == type(None):
-			self.EP2_finder.EP2_list = self.EP2_finder.EP2finderPgeoDelta(self.eta0/(2*np.pi))
+			if hasattr(self, "P3") == True:
+				self.EP2_finder.EP2_list = self.EP2_finder.EP2finderPgeoDelta_3rdtone(self.eta0/(2*np.pi), self.P3(0,1,1)*1e6, self.D3(0,1,1)/(2*np.pi*1e6))
+			else:
+				self.EP2_finder.EP2_list = self.EP2_finder.EP2finderPgeoDelta(self.eta0/(2*np.pi))
 		else:
-			self.EP2_finder.EP2_list = self.EP2_finder.EP2finderPgeoDelta(eta)
+			if hasattr(self, "P3") == True:
+				self.EP2_finder.EP2_list = self.EP2_finder.EP2finderPgeoDelta_3rdtone(eta, self.P3(0,1,1)*1e6, self.D3(0,1,1)/(2*np.pi*1e6))
+			else:
+				self.EP2_finder.EP2_list = self.EP2_finder.EP2finderPgeoDelta(eta)
 		self.EP = self.EP2_finder.EP2_list[0]
 		return
-
 
 	def set_initial_state(self, c0):
 		# institute gauge choice here
@@ -714,7 +744,6 @@ class dynamics_sim_EP2():
 
 		return np.array([[a, b], [c, d]])
 
-
 	def calc_prop_list(self, Tlist, Projection, traceless = False):
 
 		self.tstamps = Tlist
@@ -744,7 +773,7 @@ class dynamics_sim_EP2():
 		c1 = self.c1[-1]
 		c2 = self.c2[-1]
 
-		return (c1 + c2)/2
+		return (c1 + c2)/np.sqrt(2)
 
 	def calc_evec_phase_list(self, Tlist, traceless = False):
 
@@ -801,7 +830,6 @@ class dynamics_sim_EP2():
 			self.plot_Evec_phase()
 		return
 
-
 	def plot_diags(self):
 		a_f = self.current_prop_f[0]
 		d_f = self.current_prop_f[3]
@@ -811,6 +839,7 @@ class dynamics_sim_EP2():
 		EPoffsetD = self.delta(0,1,1)/(2*np.pi*1e6) - self.EP[1]
 
 		fig, [ax1, ax2] = plt.subplots(nrows = 1, ncols = 2, figsize = (13,6))
+		fig.subplots_adjust(wspace = 0.3)
 		ax1.plot(self.tstamps*1e3, np.log(np.abs(a_f)), label = '$U_{11}$ forwards')
 		ax1.plot(self.tstamps*1e3, np.log(np.abs(d_f)), label = '$U_{22}$ forwards')
 		ax1.plot(self.tstamps*1e3, np.log(np.abs(a_b)), label = '$U_{11}$ backwards', linestyle = '--')
@@ -840,6 +869,7 @@ class dynamics_sim_EP2():
 		EPoffsetD = self.delta(0,1,1)/(2*np.pi*1e6) - self.EP[1]
 
 		fig, [ax1, ax2] = plt.subplots(nrows = 1, ncols = 2, figsize = (13,6))
+		fig.subplots_adjust(wspace = 0.3)
 		ax1.plot(self.tstamps*1e3, np.log(np.abs(a_f)), label = '$U_{11}$ forwards')
 		ax1.plot(self.tstamps*1e3, np.log(np.abs(a_b)), label = '$U_{11}$ backwards', linestyle = '--')
 		ax1.legend()
@@ -857,9 +887,6 @@ class dynamics_sim_EP2():
 		plt.savefig(filename, bbox_inches = 'tight')
 		plt.close()
 		return
-
-
-
 
 	def lockin_signal(self, BW, fdemod1, fdemod2):
 		# signal in the diagonal basis
