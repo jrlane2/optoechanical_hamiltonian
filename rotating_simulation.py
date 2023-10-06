@@ -171,6 +171,8 @@ class Dynamical_Hamiltonian():
 		sigma_332 = lambda t, Tend, ccw: sigma_jk(P3(t, Tend, ccw), Delta3(t, Tend, ccw), P3(t, Tend, ccw), Delta3(t, Tend, ccw),
 					self.omega2, self.Kappa, self.Kappaext, Omega_L)
 
+		ncav3 = lambda t, Tend, ccw: ncav(Delta3(t, Tend, ccw), self.Kappa, self.Kappaext, P3(t, Tend, ccw), Omega_L)
+
 		HSigma = lambda t, Tend, ccw: H_sigma(self.P1(t, Tend, ccw), self.Delta1(t, Tend, ccw), self.P2(t, Tend, ccw), self.Delta2(t, Tend, ccw),
 					self.phi12(t, Tend, ccw), self.omega1, self.omega2, self.gamma1, self.gamma2, self.Kappa, self.Kappaext, self.g1, self.g2)
 
@@ -182,7 +184,10 @@ class Dynamical_Hamiltonian():
 		self.Htot = lambda t, Tend, ccw: (
 			self.Hbare + HSigma(t, Tend, ccw) + HPhotoThermal(t, Tend, ccw) + 
 					((self.Delta1(t, Tend, ccw)- self.Delta2(t, Tend, ccw)) / 2)*PauliZ +
-					np.array([[self.g1**2*sigma_331(t, Tend, ccw), 0],[0, self.g2**2*sigma_332(t, Tend, ccw)]])
+					np.array([
+						[self.g1**2*sigma_331(t, Tend, ccw) - self.A1*ncav3(t, Tend, ccw), 0],
+						[0, self.g2**2*sigma_332(t, Tend, ccw) - self.A2*ncav3(t, Tend, ccw)]
+						])
 					)
 
 		return
@@ -289,7 +294,9 @@ class Static_Hamiltonian():
 
 		sigma_332 = sigma_jk(P3, Delta3, P3, Delta3, self.omega2, self.Kappa, self.Kappaext, Omega_L)
 
-		self.Htot = self.Htot + np.array([[self.g1**2*sigma_331, 0],[0, self.g2**2*sigma_332]])
+		ncav3 = ncav(self.Delta3, self.Kappa, self.Kappaext, self.P3, Omega_L)
+
+		self.Htot = self.Htot + np.array([[self.g1**2*sigma_331 - self.A1*ncav3, 0],[0, self.g2**2*sigma_332 - self.A2*ncav3]])
 
 		return
 
@@ -614,8 +621,10 @@ class dynamics_sim_EP2():
 		self.Gamma = np.array([[1,1],[1j,-1j]])
 		self.Gammainv = np.linalg.inv(self.Gamma)
 
-		# self.Tinv = 0.5*np.array([[1,1],[self.e2 - tr/2, self.e1 - tr/2]])
-		# self.T = np.linalg.inv(self.Tinv)
+		self.R_EP, self.phi_EP = Ham_at_EP_get_Rphi(self.H0)
+
+		temp = np.array([1, 1j*np.exp(1j*self.phi_EP)])
+		self.EP_eigenvector = temp/np.linalg.norm(temp) # normalize the eigenvector
 		
 		# determine if gain mode is mode 1 or mode 2
 		sort_indicesI = np.argsort(np.imag(evals))
@@ -763,33 +772,42 @@ class dynamics_sim_EP2():
 
 		return
 
-	def eigenvector_phase(self, Tend, ccw, traceless = False):
+	def eigenvector_phase(self, Tend, ccw, traceless = False, projmethod = 1):
 		# Simulation of the phase accumulated by the single eigenvector near an EP
 		# Which, since we're never actually at an EP, is the average of the two 
 		# actual eigenvectors. 
-		self.c0 = self.S @ np.array([1,1])/np.sqrt(2)
+		if projmethod == 1:
+			self.c0 = self.S @ np.array([1,1])/np.sqrt(2)
+		else:
+			self.c0 = self.EP_eigenvector
+
 		self.run_loop(Tend, ccw, traceless)
-		self.project_solution("Diagonal")
-		c1 = self.c1[-1]
-		c2 = self.c2[-1]
 
-		return (c1 + c2)/np.sqrt(2)
+		if projmethod == 1:
+			self.project_solution("Diagonal")
+			c1 = self.c1[-1]
+			c2 = self.c2[-1]
+			return (c1 + c2)/np.sqrt(2)
+		else:
+			dualvector = np.conjugate(self.EP_eigenvector)
+			sol1proj = dualvector @ self.sol1.y
+			return sol1proj[-1]
 
-	def calc_evec_phase_list(self, Tlist, traceless = False):
+	def calc_evec_phase_list(self, Tlist, traceless = False, projmethod = 1):
 
 		self.tstamps = Tlist
 		self.steps = len(Tlist)
 		a = np.zeros(self.steps)+1j
 
 		for i, t in enumerate(self.tstamps):
-			proptemp = self.eigenvector_phase(t, 1, traceless)
+			proptemp = self.eigenvector_phase(t, 1, traceless, projmethod)
 			a[i] = proptemp
 		self.current_sim_f = a
 
 		a = np.zeros(self.steps)+1j
 
 		for i, t in enumerate(self.tstamps):
-			proptemp = self.eigenvector_phase(t, -1, traceless)
+			proptemp = self.eigenvector_phase(t, -1, traceless, projmethod)
 			a[i] = proptemp
 		self.current_sim_b = a
 
@@ -817,8 +835,8 @@ class dynamics_sim_EP2():
 			self.plot_diags()
 		return
 
-	def calc_and_save_evec_phase(self, Tlist, filename_f, filename_b, traceless = False, plot = False):
-		self.calc_evec_phase_list(Tlist, traceless)
+	def calc_and_save_evec_phase(self, Tlist, filename_f, filename_b, traceless = False, projmethod = 1, plot = False):
+		self.calc_evec_phase_list(Tlist, traceless, projmethod)
 		filename_f = self.current_path + '/' + filename_f
 		filename_b = self.current_path + '/' + filename_b
 
