@@ -185,8 +185,8 @@ class Dynamical_Hamiltonian():
 			self.Hbare + HSigma(t, Tend, ccw) + HPhotoThermal(t, Tend, ccw) + 
 					((self.Delta1(t, Tend, ccw)- self.Delta2(t, Tend, ccw)) / 2)*PauliZ +
 					np.array([
-						[self.g1**2*sigma_331(t, Tend, ccw) - self.A1*ncav3(t, Tend, ccw), 0],
-						[0, self.g2**2*sigma_332(t, Tend, ccw) - self.A2*ncav3(t, Tend, ccw)]
+						[-1j*self.g1**2*sigma_331(t, Tend, ccw) - self.A1*ncav3(t, Tend, ccw), 0],
+						[0, -1j*self.g2**2*sigma_332(t, Tend, ccw) - self.A2*ncav3(t, Tend, ccw)]
 						])
 					)
 
@@ -296,7 +296,7 @@ class Static_Hamiltonian():
 
 		ncav3 = ncav(self.Delta3, self.Kappa, self.Kappaext, self.P3, Omega_L)
 
-		self.Htot = self.Htot + np.array([[self.g1**2*sigma_331 - self.A1*ncav3, 0],[0, self.g2**2*sigma_332 - self.A2*ncav3]])
+		self.Htot = self.Htot + np.array([[-1j*self.g1**2*sigma_331 - self.A1*ncav3, 0],[0, -1j*self.g2**2*sigma_332 - self.A2*ncav3]])
 
 		return
 
@@ -356,10 +356,14 @@ class Manual_Hamiltonian():
 	Class for just plugging in a dynamical matrix by hand
 	This one takes in time dependence simply by rotating the off-diagonal terms by 2pi
 	'''
-	def __init__(self, Ham):
+	def __init__(self, Ham, phiT = None):
 
-		def phidep(t, Tend, ccw):
+		if type(phiT) == type(None):
+			def phidep(t, Tend, ccw):
 				return np.array([[1, np.exp(-1j*2*np.pi*t*ccw/Tend)],[np.exp(1j*2*np.pi*t*ccw/Tend), 1]])
+		else:
+			def phidep(t, Tend, ccw):
+				return  np.array([[1, np.exp(-1j*phiT(t, Tend, ccw))],[np.exp(1j*phiT(t, Tend, ccw)), 1]])
 
 		self.Htot = lambda t, Tend, ccw: Ham*phidep(t, Tend, ccw)
 		return
@@ -564,10 +568,10 @@ def fix_S(S):
 
 
 class dynamics_sim_EP2():
-	def __init__(self, Hparams, manual_Ham = None):
+	def __init__(self, Hparams, manual_Ham = None, phiT = None):
 		if type(manual_Ham) != type(None):
 
-			self.Ham = Manual_Hamiltonian(manual_Ham)
+			self.Ham = Manual_Hamiltonian(manual_Ham, phiT)
 			self.H0 = self.Ham.HRetraceless(0,1,1)
 
 			self.get_H0_stuff()
@@ -618,13 +622,13 @@ class dynamics_sim_EP2():
 		self.T = np.array([[1, self.cos],[1, -self.cos]])
 		self.Tinv = np.linalg.inv(self.T)
 
-		self.Gamma = np.array([[1,1],[1j,-1j]])
-		self.Gammainv = np.linalg.inv(self.Gamma)
-
 		self.R_EP, self.phi_EP = Ham_at_EP_get_Rphi(self.H0)
 
+		self.Gamma = np.array([[1,1/2],[1j*np.exp(1j*self.phi_EP),-1j*np.exp(1j*self.phi_EP)/2]])
+		self.Gammainv = np.linalg.inv(self.Gamma)
+
 		temp = np.array([1, 1j*np.exp(1j*self.phi_EP)])
-		self.EP_eigenvector = temp/np.linalg.norm(temp) # normalize the eigenvector
+		self.EP_eigenvector = temp# /np.linalg.norm(temp) # normalize the eigenvector
 		
 		# determine if gain mode is mode 1 or mode 2
 		sort_indicesI = np.argsort(np.imag(evals))
@@ -791,23 +795,57 @@ class dynamics_sim_EP2():
 		else:
 			dualvector = np.conjugate(self.EP_eigenvector)
 			sol1proj = dualvector @ self.sol1.y
-			return sol1proj[-1]
+			return sol1proj[-1]/2
 
-	def calc_evec_phase_list(self, Tlist, traceless = False, projmethod = 1):
+	def eigenvector_phase_manualc0(self, Tend, ccw, c0, traceless = False, projmethod = 1):
+		# Simulation of the phase accumulated by the single eigenvector near an EP
+		# Which, since we're never actually at an EP, is the average of the two 
+		# actual eigenvectors. 
+
+		self.c0 = c0
+		if projmethod == 1:
+			dualvector = np.conjugate(np.array([1,1])/np.sqrt(2))
+		else:
+			dualvector = np.conjugate(self.EP_eigenvector)
+
+		cpsi0 = dualvector @ self.c0
+		self.run_loop(Tend, ccw, traceless)
+
+		if projmethod == 1:
+			self.project_solution("Diagonal")
+			c1 = self.c1[-1]
+			c2 = self.c2[-1]
+			return (c1 + c2)/np.sqrt(2)
+		else:
+			sol1proj = dualvector @ self.sol1.y
+			return sol1proj[-1]/cpsi0
+
+
+	def calc_evec_phase_list(self, Tlist, traceless = False, projmethod = 1, manualc0 = None):
 
 		self.tstamps = Tlist
 		self.steps = len(Tlist)
 		a = np.zeros(self.steps)+1j
 
 		for i, t in enumerate(self.tstamps):
-			proptemp = self.eigenvector_phase(t, 1, traceless, projmethod)
+			if type(manualc0) == type(None):
+				proptemp = self.eigenvector_phase(t, 1, traceless, projmethod)
+			elif type(manualc0) == type(np.array([1,2])):
+				proptemp = self.eigenvector_phase_manualc0(t, 1, manualc0, traceless, projmethod)
+			else:
+				print("Invalid c0 input")
 			a[i] = proptemp
 		self.current_sim_f = a
 
 		a = np.zeros(self.steps)+1j
 
 		for i, t in enumerate(self.tstamps):
-			proptemp = self.eigenvector_phase(t, -1, traceless, projmethod)
+			if type(manualc0) == type(None):
+				proptemp = self.eigenvector_phase(t, -1, traceless, projmethod)
+			elif type(manualc0) == type(np.array([1,2])):
+				proptemp = self.eigenvector_phase_manualc0(t, -1, manualc0, traceless, projmethod)
+			else:
+				print("Invalid c0 input")
 			a[i] = proptemp
 		self.current_sim_b = a
 
